@@ -1,14 +1,3 @@
-/*
- * mm-naive.c - The fastest, least memory-efficient malloc package.
- * 
- * In this naive approach, a block is allocated by simply incrementing
- * the brk pointer.  A block is pure payload. There are no headers or
- * footers.  Blocks are never coalesced or reused. Realloc is
- * implemented directly using mm_malloc and mm_free.
- *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a high level description of your solution.
- */
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -63,7 +52,7 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
-/* rounds up to the nearest multiple of ALIGNMENT */
+/* 정렬 유지 위해 가까운 배수로 반올림 */
 #define ALIGN(size) (((size) + (DSIZE-1)) & ~0x7)
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
@@ -71,9 +60,12 @@ team_t team = {
 /* 함수 선언 */
 static void *extend_heap(size_t);
 static void *coalesce(void *);
+static void *find_fit(size_t);
+static void place(void *, size_t);
 
 /* 전역 변수 */
 static char *heap_listp;
+static char *last_bp ; 
 
 /* 
  * mm_init - 할당기 초기화 
@@ -92,6 +84,7 @@ int mm_init(void)
     /* heap을 CHUNKSIZE 바이트로 확장 후 초기 가용 블록 생성 */
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL) 
         return -1;
+    last_bp = heap_listp; 
     return 0;
 }
 
@@ -105,6 +98,7 @@ static void *coalesce(void *bp)
     size_t size = GET_SIZE(HDRP(bp));
 
     if (prev_alloc && next_alloc){        /* Case 1 */
+        last_bp = bp; 
         return bp;
     }
 
@@ -125,6 +119,7 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
+    last_bp = bp; 
     return bp;
 }
 
@@ -152,19 +147,34 @@ static void *extend_heap(size_t words)
     return coalesce(bp);
 }
 
-/* first-fit 검색 */
+/* next-fit 검색 */
 static void *find_fit(size_t asize)
 {
-    void *bp;
+    char *bp = last_bp;
 
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    /* 현재 위치에서 다음 블록의 블록 크기가 0이 아닐 때, 그 다음 블록 검색 */
+    for (bp = NEXT_BLKP(bp); GET_SIZE(HDRP(bp))!=0; bp = NEXT_BLKP(bp))
     {
-        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){
+        /* 가용 블록이고, 크기가 사이즈보다 크거나 같을 때 */
+        if (GET_ALLOC(HDRP(bp)) == 0 && GET_SIZE(HDRP(bp)) >= asize)
+        {
+            last_bp = bp;
+            return bp;
+        }        
+    }
+
+    /* 가용 블록 리스트가 나올 때까지 */
+    bp = heap_listp;
+    while (bp < last_bp)
+    {
+        bp = NEXT_BLKP(bp);
+        if (GET_ALLOC(HDRP(bp)) == 0 && GET_SIZE(HDRP(bp)) >= asize)
+        {
+            last_bp = bp;
             return bp;
         }
     }
-    /* No fit */
-    return NULL;    
+    return NULL ;  
 }
 
 /* 
@@ -213,6 +223,7 @@ void *mm_malloc(size_t size)
     if ((bp = find_fit(asize)) != NULL){
         /* 맞는 블록 찾으면 할당기는 요청한 블록을 배치, 옵션으로 추가 부분 분할 */
         place(bp, asize);
+        last_bp = bp;
         /* 새로 할당한 블록의 포인터 return */
         return bp;
     }
@@ -223,6 +234,7 @@ void *mm_malloc(size_t size)
         return NULL;
     /* 요청한 블록을 새 가용 블록에 배치, 필요시 블록을 분할 */
     place(bp, asize);
+    last_bp = bp;
     /* 새로 할당한 블록의 포인터 return */
     return bp;
 }
@@ -233,7 +245,6 @@ void *mm_malloc(size_t size)
 void mm_free(void *bp)
 {
     size_t size = GET_SIZE(HDRP(bp));
-
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
     /* 인접 가용 블록들 통합 */
